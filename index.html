@@ -1,0 +1,325 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Misiones Escolares | Daniel</title>
+    
+    <!-- React & Babel -->
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- FontAwesome -->
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+
+    <!-- Firebase SDK (Versión Compat, perfecta para un solo HTML) -->
+    <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore-compat.js"></script>
+
+    <style>
+        body { background-color: #020617; color: #f8fafc; font-family: system-ui, -apple-system, sans-serif; }
+        .glass { background: rgba(15, 23, 42, 0.8); backdrop-filter: blur(12px); border: 1px solid rgba(255,255,255,0.05); }
+        .bg-glow { background: radial-gradient(circle at 50% 0%, #3b0764 0%, #020617 70%); min-height: 100vh; }
+        @keyframes bounce-slow { 0%, 100% { transform: translateY(-5%); } 50% { transform: translateY(0); } }
+        .animate-bounce-slow { animation: bounce-slow 3s infinite; }
+        
+        /* Ocultar barra de scroll para un look más limpio */
+        ::-webkit-scrollbar { width: 8px; }
+        ::-webkit-scrollbar-track { background: #020617; }
+        ::-webkit-scrollbar-thumb { background: #3b0764; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: #6b21a8; }
+    </style>
+</head>
+<body class="bg-glow selection:bg-purple-500 selection:text-white">
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef } = React;
+
+        // =========================================================================
+        // 🚨 TU CONFIGURACIÓN DE FIREBASE (YA INTEGRADA) 🚨
+        // =========================================================================
+        const firebaseConfig = {
+            apiKey: "AIzaSyC963kwVmdjyy_bcAr9H9J3Gkhlu8SfB2w",
+            authDomain: "tareas-11208.firebaseapp.com",
+            projectId: "tareas-11208",
+            storageBucket: "tareas-11208.firebasestorage.app",
+            messagingSenderId: "303154864978",
+            appId: "1:303154864978:web:caa95449d4006a82f9908b",
+            measurementId: "G-HL9SR4RL9B"
+        };
+
+        // Inicializar Firebase
+        let auth, db;
+        try {
+            firebase.initializeApp(firebaseConfig);
+            auth = firebase.auth();
+            db = firebase.firestore();
+            console.log("Firebase conectado exitosamente, jefe.");
+        } catch (error) {
+            console.error("Error iniciando Firebase:", error);
+        }
+
+        // =========================================================================
+        // IA GEMINI CON TU API KEY
+        // =========================================================================
+        const callGemini = async (prompt, base64Image = null) => {
+            const apiKey = "AIzaSyCaN53yPSEuhhxayl4it-DA3K_1YUrbu-Y"; 
+            const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`;
+            
+            const parts = [{ text: prompt }];
+            if (base64Image) {
+                parts.push({ inlineData: { mimeType: "image/jpeg", data: base64Image.split(',')[1] } });
+            }
+
+            const payload = {
+                contents: [{ role: "user", parts }],
+                systemInstruction: { parts: [{ text: "Eres un asistente escolar sarcástico creado por Daniel. NO des respuestas, da pistas. Revisa mala ortografía y que tenga la fecha en las fotos. Sé estricto." }] }
+            };
+
+            try {
+                const res = await fetch(url, { method: 'POST', body: JSON.stringify(payload), headers: {'Content-Type': 'application/json'} });
+                const data = await res.json();
+                if (data.error) throw new Error(data.error.message);
+                return data.candidates[0].content.parts[0].text;
+            } catch (e) { 
+                console.error(e);
+                return "La IA está saturada intentando procesar tanta trampa. Intenta de nuevo en unos segundos."; 
+            }
+        };
+
+        // --- MISIONES ---
+        const MISSIONS = [
+            { id: 'm1', title: 'Autocorrección', desc: 'Evalúa tu propuesta. Sube foto del formato "Reorganizamos la presentación".' },
+            { id: 'm2', title: 'Publicidad', desc: 'Sube foto de tu cartel y tu justificación en el cuaderno.' },
+            { id: 'm3', title: 'Logística', desc: 'Sube foto de tu lista de materiales y borrador a la directora.' },
+            { id: 'm4', title: 'Problema Detectado', desc: 'Sube foto de tu cuaderno con el problema que elegiste.' },
+            { id: 'm5', title: 'Diseño de Solución', desc: 'Sube foto de cómo lo resolverías y sus beneficios.' },
+            { id: 'm6', title: 'Registro Formal', desc: 'Sube foto de tabla pág 206 y tu Acuerdo Personal.' }
+        ];
+
+        // --- APLICACIÓN PRINCIPAL ---
+        function App() {
+            const [savedName, setSavedName] = useState(localStorage.getItem('system_username') || '');
+            const [user, setUser] = useState(null);
+            const [studentData, setStudentData] = useState({ tasks: {} });
+            const [allStudents, setAllStudents] = useState([]);
+            
+            const isAdmin = savedName === 'Daniel_prro2023567';
+
+            useEffect(() => {
+                auth.signInAnonymously().catch(e => console.error("Error Auth:", e));
+                auth.onAuthStateChanged(setUser);
+            }, []);
+
+            useEffect(() => {
+                if (!user || !savedName) return;
+                
+                // Escuchar datos en tiempo real desde TU Nube (Firebase)
+                const unsubscribe = db.collection('students_data').onSnapshot((snap) => {
+                    const list = [];
+                    snap.forEach(doc => {
+                        list.push({ id: doc.id, ...doc.data() });
+                        if (doc.id === savedName) setStudentData(doc.data());
+                    });
+                    setAllStudents(list);
+                }, (error) => {
+                    console.error("Error de Firestore (Revisa las reglas):", error);
+                });
+
+                return () => unsubscribe();
+            }, [user, savedName]);
+
+            const saveTaskToCloud = async (taskId, updates) => {
+                const currentTasks = studentData.tasks || {};
+                await db.collection('students_data').doc(savedName).set({
+                    tasks: { ...currentTasks, [taskId]: { ...currentTasks[taskId], ...updates } }
+                }, { merge: true });
+            };
+
+            const handleLogin = (name) => {
+                localStorage.setItem('system_username', name);
+                setSavedName(name);
+            };
+
+            if (!savedName) return <LoginScreen onLogin={handleLogin} />;
+            if (isAdmin) return <AdminPanel students={allStudents} />;
+
+            const progress = Math.round((MISSIONS.filter(m => studentData.tasks?.[m.id]?.completed).length / MISSIONS.length) * 100);
+            if (progress === 100) return <Winner username={savedName} />;
+
+            return (
+                <div className="pb-20">
+                    <div className="glass sticky top-0 z-50 p-6 border-b border-slate-800 shadow-xl">
+                        <div className="max-w-3xl mx-auto flex justify-between items-center">
+                            <div>
+                                <h1 className="text-xl md:text-2xl font-bold flex gap-2"><span className="text-purple-500"><i className="fa-solid fa-shield-halved"></i></span> {savedName}</h1>
+                                <p className="text-xs text-slate-400 mt-1">Sesión bloqueada en este dispositivo.</p>
+                            </div>
+                            <div className="text-right">
+                                <div className="text-3xl font-black text-purple-400">{progress}%</div>
+                            </div>
+                        </div>
+                    </div>
+                    <div className="max-w-3xl mx-auto p-4 mt-6 space-y-6">
+                        {MISSIONS.map(m => <TaskCard key={m.id} mission={m} data={studentData.tasks?.[m.id] || {}} onUpdate={(u) => saveTaskToCloud(m.id, u)} />)}
+                    </div>
+                </div>
+            );
+        }
+
+        // --- PANTALLAS ---
+        function LoginScreen({ onLogin }) {
+            return (
+                <div className="min-h-screen flex items-center justify-center p-4">
+                    <div className="glass p-8 rounded-3xl shadow-2xl border border-slate-800 w-full max-w-md text-center">
+                        <i className="fa-solid fa-user-astronaut text-purple-400 text-6xl mb-6"></i>
+                        <h1 className="text-3xl font-bold mb-2 text-white">Sistema Central</h1>
+                        <p className="text-slate-400 text-sm mb-6">Ingresa tu nombre. No podrás cambiarlo después.</p>
+                        <form onSubmit={(e) => { e.preventDefault(); onLogin(e.target.n.value.trim()); }}>
+                            <input name="n" placeholder="Tu nombre y apellido..." className="w-full bg-slate-900 border border-slate-700 rounded-xl p-4 mb-4 text-white focus:border-purple-500 outline-none" required />
+                            <button className="w-full bg-purple-600 hover:bg-purple-500 font-bold py-4 rounded-xl shadow-lg text-white">Vincular Dispositivo</button>
+                        </form>
+                    </div>
+                </div>
+            );
+        }
+
+        function Winner({ username }) {
+            return (
+                <div className="min-h-screen flex flex-col items-center justify-center text-center p-6">
+                    <i className="fa-solid fa-trophy text-8xl text-yellow-500 mb-6 animate-bounce-slow"></i>
+                    <h1 className="text-5xl font-black text-emerald-400 mb-4">¡SISTEMA COMPLETADO!</h1>
+                    <p className="text-slate-300 text-lg">{username}, lograste el 100%. Toma captura de esta pantalla como evidencia.</p>
+                </div>
+            );
+        }
+
+        function TaskCard({ mission, data, onUpdate }) {
+            const [q, setQ] = useState('');
+            const [loading, setLoading] = useState(false);
+            const [showH, setShowH] = useState(false);
+            const inputRef = useRef();
+
+            const resizeImg = (f) => new Promise(r => {
+                const img = new Image(); const reader = new FileReader();
+                reader.onload = e => { img.src = e.target.result; };
+                img.onload = () => {
+                    const canvas = document.createElement('canvas');
+                    // 400px es perfecto para que cargue rápido y no llene tu Firebase
+                    canvas.width = 400; canvas.height = img.height * (400/img.width);
+                    canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+                    r(canvas.toDataURL('image/jpeg', 0.5));
+                };
+                reader.readAsDataURL(f);
+            });
+
+            return (
+                <div className={`p-6 rounded-2xl border transition-all ${data.completed ? 'bg-emerald-950/20 border-emerald-900/50' : 'glass border-slate-800'}`}>
+                    <h3 className={`font-bold text-xl mb-1 flex items-center gap-2 ${data.completed ? 'text-emerald-400' : 'text-white'}`}>
+                        {data.completed && <i className="fa-solid fa-circle-check"></i>} {mission.title}
+                    </h3>
+                    <p className="text-sm text-slate-400 mb-4">{mission.desc}</p>
+                    
+                    {!data.completed && (
+                        <div className="flex flex-wrap gap-2">
+                            <button onClick={() => data.aiUsed ? alert("Jaja intentas burlar al sistema pero sé que ya lo usaste 🤡") : setShowH(!showH)} className="bg-blue-900/30 text-blue-400 px-4 py-3 rounded-xl font-bold text-sm border border-blue-800/50">
+                                <i className="fa-solid fa-robot"></i> Ayuda IA
+                            </button>
+                            <button onClick={() => inputRef.current.click()} className="bg-purple-600 px-4 py-3 rounded-xl font-bold text-sm text-white shadow-lg">
+                                <i className="fa-solid fa-camera"></i> {loading ? 'Procesando...' : 'Tomar/Subir Foto'}
+                            </button>
+                            <input type="file" ref={inputRef} hidden accept="image/*" onChange={async e => {
+                                if(!e.target.files[0]) return;
+                                setLoading(true);
+                                const b64 = await resizeImg(e.target.files[0]);
+                                const fbk = await callGemini(`Revisa ortografía y si hay fecha en esta tarea: ${mission.title}`, b64);
+                                onUpdate({ photoBase64: b64, aiPhotoFeedback: fbk, completed: true });
+                                setLoading(false);
+                            }} />
+                        </div>
+                    )}
+
+                    {showH && !data.aiUsed && (
+                        <div className="mt-4 p-4 bg-slate-900 rounded-xl border border-blue-900/50">
+                            <textarea className="w-full bg-slate-950 p-3 rounded-lg text-sm outline-none text-white border border-slate-800 focus:border-blue-500" rows="2" placeholder="Explica tu duda aquí..." value={q} onChange={e=>setQ(e.target.value)}></textarea>
+                            <button onClick={async () => {
+                                if(!q) return; setLoading(true);
+                                const res = await callGemini(`El alumno tiene una duda sobre ${mission.title}. Su duda es: ${q}`);
+                                onUpdate({ aiUsed: true, aiQuestion: q, aiResponse: res });
+                                setLoading(false); setShowH(false);
+                            }} className="w-full mt-3 bg-blue-600 py-3 rounded-lg text-sm font-bold text-white">{loading ? 'Pensando...' : 'Enviar a la IA'}</button>
+                        </div>
+                    )}
+
+                    {data.aiUsed && (
+                        <div className="mt-4 p-4 bg-slate-900/80 rounded-xl border border-slate-800">
+                            <p className="text-slate-400 italic mb-2 text-sm"><i className="fa-solid fa-user text-slate-500 mr-2"></i>"{data.aiQuestion}"</p>
+                            <p className="text-blue-300 text-sm"><i className="fa-solid fa-robot text-blue-500 mr-2"></i>{data.aiResponse}</p>
+                        </div>
+                    )}
+                    
+                    {data.photoBase64 && (
+                        <div className="mt-4 flex flex-col sm:flex-row gap-4">
+                            <img src={data.photoBase64} className="w-full sm:w-32 h-32 object-cover rounded-lg border border-slate-700"/>
+                            <div className="bg-slate-900 p-3 rounded-lg border border-slate-800 flex-1">
+                                <p className="text-xs text-slate-500 font-bold uppercase mb-1">Evaluación IA:</p>
+                                <p className="text-sm text-slate-300">{data.aiPhotoFeedback}</p>
+                            </div>
+                        </div>
+                    )}
+                </div>
+            );
+        }
+
+        // --- PANEL DE ADMINISTRADOR ---
+        function AdminPanel({ students }) {
+            const real = students.filter(s => s.id !== 'Daniel_prro2023567');
+            return (
+                <div className="p-6 max-w-5xl mx-auto">
+                    <div className="flex justify-between items-center mb-8 bg-red-950/30 p-6 rounded-2xl border border-red-900/50 shadow-lg">
+                        <h1 className="text-2xl md:text-3xl font-black text-red-500 flex items-center gap-3">
+                            <i className="fa-solid fa-lock"></i> PANEL MAESTRO DANIEL
+                        </h1>
+                        <i className="fa-solid fa-eye text-4xl text-red-900/50"></i>
+                    </div>
+                    
+                    {real.length === 0 ? (
+                        <div className="text-center p-10 glass rounded-2xl text-slate-500">Nadie ha subido tareas aún a tu base de datos.</div>
+                    ) : (
+                        <div className="grid gap-6">
+                            {real.map(s => (
+                                <div key={s.id} className="glass rounded-2xl overflow-hidden border-slate-800 shadow-xl">
+                                    <div className="p-5 bg-slate-800/30 border-b border-slate-800 flex items-center gap-3">
+                                        <div className="w-10 h-10 bg-purple-900 text-purple-300 rounded-full flex items-center justify-center font-bold">
+                                            {s.id.charAt(0).toUpperCase()}
+                                        </div>
+                                        <h2 className="font-bold text-xl text-white">{s.id}</h2>
+                                    </div>
+                                    <div className="p-5 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                                        {MISSIONS.map(m => {
+                                            const t = s.tasks?.[m.id];
+                                            if(!t) return null;
+                                            return (
+                                                <div key={m.id} className="bg-slate-950 p-4 rounded-xl border border-slate-800 flex flex-col justify-between">
+                                                    <div>
+                                                        <h5 className="font-bold text-sm text-purple-400 mb-3 border-b border-slate-800 pb-2">
+                                                            {m.title} {t.completed && <span className="float-right"><i className="fa-solid fa-check text-green-500"></i></span>}
+                                                        </h5>
+                                                        {t.aiUsed && (
+                                                            <div className="bg-orange-950/20 p-2 rounded mb-3 border border-orange-900/30">
+                                                                <p className="text-xs text-orange-400 font-bold mb-1">⚠️ Pidió Ayuda a la IA:</p>
+                                                                <p className="text-xs text-slate-300">"{t.aiQuestion}"</p>
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                    {t.photoBase64 && (
+                                                        <div className="mt-2">
+                                                            <a href={t.photoBase64} download={`${s.id}_${m.title}.jpg`} className="block group relative">
+                                                                <img src={t.photoBase64} className="h-28 w-full object-cover rounded-lg border border-slate-700 transition-opacity group-hover:opacity-50" />
+                                                                <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 
