@@ -323,3 +323,26 @@
                                                             <a href={t.photoBase64} download={`${s.id}_${m.title}.jpg`} className="block group relative">
                                                                 <img src={t.photoBase64} className="h-28 w-full object-cover rounded-lg border border-slate-700 transition-opacity group-hover:opacity-50" />
                                                                 <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 
+transition-opacity">
+                                                                    <i className="fa-solid fa-download text-2xl text-white drop-shadow-md"></i>
+                                                                </div>
+                                                            </a>
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            )
+                                        })}
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    )}
+                </div>
+            );
+        }
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
